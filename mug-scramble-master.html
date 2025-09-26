@@ -596,19 +596,12 @@
     </div>
 
     <script>
-        function downloadPDF() {
-            // This function will trigger the PDF download
-            // You'll replace this with your actual PDF file URL
-            const pdfUrl = 'Mug-Scramble-Master-Guide.pdf'; // Replace with your PDF file name
-            
-            // Create a temporary link element
-            const link = document.createElement('a');
-            link.href = pdfUrl;
-            link.download = 'Mug-Scramble-Master-Guide.pdf';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        }
-    </script>
+  function downloadPDF() {
+    // Send users to a viewer page where they can print or download
+    // If you have a single PDF for both, point to that filename:
+    const pdfFile = 'Mug-Scramble-Master-Guide.pdf'; // or 'Mug-Scramble-Print.pdf'
+    window.location.href = 'viewer.html?file=' + encodeURIComponent(pdfFile);
+  }
+</script>
 </body>
 </html>
