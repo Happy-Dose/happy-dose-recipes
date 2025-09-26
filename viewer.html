@@ -16,9 +16,10 @@
   .btn.print { background:#fff; color:var(--green); }
   .btn.download { background:var(--orange); color:#fff; }
   .viewer { height:calc(100vh - 64px); }
-  iframe { width:100%; height:100%; border:0; background:#fff; }
-  .fallback { padding:16px; line-height:1.6 }
+  iframe, embed { width:100%; height:100%; border:0; background:#fff; }
+  .fallback { max-width:1100px; margin:0 auto; padding:16px 12px; line-height:1.6 }
   a.link { color:var(--orange); font-weight:700; }
+  ul.links { margin:10px 0 0 16px; }
 </style>
 </head>
 <body>
@@ -33,71 +34,82 @@
   <div class="viewer" id="viewer"></div>
 
 <script>
-  // Use like: viewer.html?file=Mug-Scramble-Printable-Guide.pdf
-  const params = new URLSearchParams(location.search);
-  let file = params.get('file') || '';
-  try { file = decodeURIComponent(file); } catch (e) {}
-  file = (file || '').replace(/^\/+/, '').replace(/\/{2,}/g,'/');
-
-  // Only allow files that actually exist in your repo (root)
-  const allow = new Set([
+  // Files that actually exist in your repo root
+  const allowed = new Set([
     'Mug-Scramble-Printable-Guide.pdf',
     'mug-scramble-print.pdf',
     'mug-scramble-master.html'
   ]);
+
+  // Map old/mistyped names to the real one
+  const aliases = new Map([
+    ['Mug-Scramble-Master-Guide.pdf', 'Mug-Scramble-Printable-Guide.pdf'],
+    ['Mug_Scramble_Master_Guide.pdf', 'Mug-Scramble-Printable-Guide.pdf']
+  ]);
+
+  const params = new URLSearchParams(location.search);
+  const raw = params.get('file') || '';
+  const cleaned = raw.replace(/[^a-zA-Z0-9._-]/g,''); // preserve case/.-_
+  const file = aliases.get(cleaned) || cleaned;
 
   const titleEl = document.getElementById('title');
   const v = document.getElementById('viewer');
   const printBtn = document.getElementById('printBtn');
   const downloadBtn = document.getElementById('downloadBtn');
 
-  function fallback(msg) {
+  function listChoices(msg) {
+    const links = Array.from(allowed)
+      .map(f => `<li><a class="link" href="viewer.html?file=${encodeURIComponent(f)}">${f}</a></li>`)
+      .join('');
     v.innerHTML = `<div class="fallback">
       <p>${msg}</p>
-      <p>Try one of these:</p>
-      <ul>
-        ${[...allow].map(x => `<li><a class="link" href="?file=${encodeURIComponent(x)}">${x}</a></li>`).join('')}
-      </ul>
+      <ul class="links">${links}</ul>
     </div>`;
-    printBtn.disabled = true;
+    titleEl.textContent = 'Viewer';
     downloadBtn.href = '#';
+    printBtn.disabled = true;
   }
 
-  if (!file || !allow.has(file)) {
-    fallback(file ? `“${file}” isn’t allowed or doesn’t exist.` : 'No file specified.');
-  } else {
-    titleEl.textContent = `Viewing: ${file.split('/').pop()}`;
+  async function exists(path) {
+    try { const res = await fetch(path, { method:'HEAD', cache:'no-store' }); return res.ok; }
+    catch { return false; }
+  }
+
+  (async () => {
+    if (!file || !allowed.has(file)) {
+      return listChoices(`“${cleaned || '(no file specified)'}” isn’t allowed or doesn’t exist.`);
+    }
+
+    if (!(await exists(file))) {
+      return listChoices(`File not found at “${file}”. Pick one of these:`);
+    }
+
+    titleEl.textContent = `Viewing: ${file}`;
     downloadBtn.href = file;
     downloadBtn.setAttribute('download', file.split('/').pop());
 
     const isPDF = /\.pdf$/i.test(file);
-    const frame = document.createElement('iframe');
-    frame.id = 'contentFrame';
-    frame.src = file + (isPDF ? '#view=FitH' : '');
-    v.appendChild(frame);
+    const el = document.createElement(isPDF ? 'embed' : 'iframe');
+    el.src = file + (isPDF ? '#view=FitH' : '');
+    el.type = isPDF ? 'application/pdf' : 'text/html';
+    el.id = 'contentFrame';
+    v.innerHTML = '';
+    v.appendChild(el);
 
+    printBtn.disabled = false;
     printBtn.addEventListener('click', () => {
-      if (isPDF) {
-        const pf = document.createElement('iframe');
-        pf.style.position='fixed'; pf.style.right='0'; pf.style.bottom='0';
-        pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
-        pf.src = file + '#view=FitH';
-        document.body.appendChild(pf);
-        pf.onload = () => {
-          try { pf.contentWindow.focus(); pf.contentWindow.print(); }
-          catch(e) { window.open(file, '_blank', 'noopener'); }
-          setTimeout(() => pf.remove(), 1200);
-        };
-      } else {
-        try { frame.contentWindow.focus(); frame.contentWindow.print(); }
-        catch(e) { window.open(file, '_blank', 'noopener'); }
-      }
+      const f = document.getElementById('contentFrame');
+      try { (f.contentWindow || f).print(); }
+      catch { window.open(file, '_blank', 'noopener'); }
     });
 
+    // Optional: auto-print with ?print=1
     if (params.get('print') === '1') {
-      frame.addEventListener('load', () => printBtn.click());
+      el.addEventListener('load', () => {
+        setTimeout(() => { try { (el.contentWindow || el).print(); } catch {} }, 200);
+      });
     }
-  }
+  })();
 </script>
 </body>
 </html>
