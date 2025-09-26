@@ -33,100 +33,127 @@
   <div class="viewer" id="viewer"></div>
 
 <script>
-  // Use like: viewer.html?file=Mug-Scramble-Master-Guide.pdf  (or an HTML file)
+  // Example usage:
+  // viewer.html?file=Mug-Scramble-Master-Guide.pdf
+  // viewer.html?file=docs/Mug-Scramble-Master-Guide.pdf
   const params = new URLSearchParams(location.search);
-  let fileParam = params.get('file') || '';
-  try { fileParam = decodeURIComponent(fileParam); } catch(e) {}
+  let raw = params.get('file') || '';
+  try { raw = decodeURIComponent(raw); } catch(e) {}
 
-  // Exact allow-list. Include either/both depending on where the asset lives.
+  // Normalize (strip leading slashes, collapse //)
+  const normalize = p => (p || '').replace(/^\/+/, '').replace(/\/{2,}/g, '/');
+  const passed = normalize(raw);
+  const base = passed.split('/').pop();   // filename only
+
+  // Minimal allow-list (protects from arbitrary paths but allows /docs/)
   const allow = new Set([
     'mug-scramble-master.html',
     'mug-scramble-print.html',
     'Mug-Scramble-Master-Guide.pdf',
     'Mug-Scramble-Print.pdf',
-    'docs/Mug-Scramble-Master-Guide.pdf'   // keep only if you deploy from /docs
+    'docs/Mug-Scramble-Master-Guide.pdf',
   ]);
-
-  // Normalize leading slashes and collapse repeated slashes
-  const file = (fileParam || '').replace(/^\/+/, '').replace(/\/{2,}/g,'/');
 
   const titleEl = document.getElementById('title');
   const v = document.getElementById('viewer');
   const printBtn = document.getElementById('printBtn');
   const downloadBtn = document.getElementById('downloadBtn');
 
-  function baseName(p) { return p.split('/').pop(); }
-
-  function fallback() {
-    const hint = file ? `(${file})` : '(no file specified)';
+  function setFallback(msg) {
+    const hint = passed || '(no file specified)';
     v.innerHTML = `<div class="fallback">
-      <p>Couldn’t load that file. Try the direct link:</p>
-      <p><a class="link" href="${file || '#'}" target="_blank" rel="noopener">${hint}</a></p>
-      <p>Allowed files are:<br>${[...allow].map(x=>`• ${x}`).join('<br>')}</p>
+      <p>${msg || "Couldn’t load that file."}</p>
+      <p>Direct link: <a class="link" href="${passed || '#'}" target="_blank" rel="noopener">${hint}</a></p>
+      <p>Allowed files:<br>${[...allow].map(x=>`• ${x}`).join('<br>')}</p>
     </div>`;
-    printBtn.disabled = !file;
-    downloadBtn.href = file || '#';
-    if (file) downloadBtn.setAttribute('download', baseName(file));
+    printBtn.disabled = true;
+    downloadBtn.href = '#';
   }
 
-  if (!file || !allow.has(file)) {
-    fallback();
+  if (!passed) {
+    setFallback('No file specified.');
   } else {
-    const nameForTitle = baseName(file);
-    titleEl.textContent = `Viewing: ${nameForTitle}`;
-    downloadBtn.href = file;
-    downloadBtn.setAttribute('download', nameForTitle);
+    // Build candidate paths to try in order
+    const candidates = [];
+    if (allow.has(passed)) candidates.push(passed);
+    // If user passed bare filename and /docs entry is allow-listed, try that too
+    if (base && allow.has('docs/' + base)) candidates.push('docs/' + base);
+    // Also try just the basename if they passed a path
+    if (base && allow.has(base) && base !== passed) candidates.push(base);
 
-    const isPDF = /\.pdf$/i.test(file);
+    // Deduplicate
+    const tried = new Set();
+    const unique = candidates.filter(p => !tried.has(p) && (tried.add(p), true));
 
-    // Always use an iframe (works for both HTML and PDFs on GitHub Pages).
-    const frame = document.createElement('iframe');
-    frame.id = 'contentFrame';
-    frame.src = file + (isPDF ? '#view=FitH' : '');
-    v.innerHTML = '';
-    v.appendChild(frame);
-
-    // Print button: HTML prints the iframe; PDF prints via a helper window/iframe for reliability.
-    printBtn.addEventListener('click', () => {
-      if (isPDF) {
-        // Hidden iframe method (reliable on most browsers)
-        const pf = document.createElement('iframe');
-        pf.style.position='fixed';
-        pf.style.right='0'; pf.style.bottom='0';
-        pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
-        pf.src = file + '#view=FitH';
-        document.body.appendChild(pf);
-        pf.onload = () => {
-          try { pf.contentWindow.focus(); pf.contentWindow.print(); }
-          catch(e) { window.open(file, '_blank', 'noopener'); }
-          setTimeout(() => pf.remove(), 1500);
-        };
-      } else {
-        try { frame.contentWindow.focus(); frame.contentWindow.print(); }
-        catch(e) { window.open(file, '_blank', 'noopener'); }
-      }
-    });
-
-    // Optional auto-print: viewer.html?file=...&print=1
-    if (params.get('print') === '1') {
-      frame.addEventListener('load', () => {
-        if (isPDF) {
-          // Use the same hidden-iframe technique to avoid blocked print() calls
-          const pf = document.createElement('iframe');
-          pf.style.position='fixed';
-          pf.style.right='0'; pf.style.bottom='0';
-          pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
-          pf.src = file + '#view=FitH';
-          document.body.appendChild(pf);
-          pf.onload = () => {
-            try { pf.contentWindow.focus(); pf.contentWindow.print(); }
-            catch(e) {}
-            setTimeout(() => pf.remove(), 1500);
-          };
-        } else {
-          try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch(e){}
+    // If nothing matched allow-list, bail
+    if (unique.length === 0) {
+      setFallback('That file is not in the allow-list.');
+    } else {
+      (async () => {
+        // Resolve first candidate that actually exists (HEAD 200)
+        let resolved = null;
+        for (const p of unique) {
+          try {
+            const res = await fetch(p, { method: 'HEAD', cache: 'no-store' });
+            if (res.ok) { resolved = p; break; }
+          } catch (e) {}
         }
-      });
+
+        if (!resolved) {
+          setFallback('File not found at any of the allowed paths.');
+          return;
+        }
+
+        const isPDF = /\.pdf$/i.test(resolved);
+        titleEl.textContent = `Viewing: ${resolved.split('/').pop()}`;
+        downloadBtn.href = resolved;
+        downloadBtn.setAttribute('download', resolved.split('/').pop());
+
+        const frame = document.createElement('iframe');
+        frame.id = 'contentFrame';
+        frame.src = resolved + (isPDF ? '#view=FitH' : '');
+        v.innerHTML = '';
+        v.appendChild(frame);
+
+        // Print handling
+        printBtn.disabled = false;
+        printBtn.addEventListener('click', () => {
+          if (isPDF) {
+            const pf = document.createElement('iframe');
+            pf.style.position='fixed'; pf.style.right='0'; pf.style.bottom='0';
+            pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
+            pf.src = resolved + '#view=FitH';
+            document.body.appendChild(pf);
+            pf.onload = () => {
+              try { pf.contentWindow.focus(); pf.contentWindow.print(); }
+              catch(e) { window.open(resolved, '_blank', 'noopener'); }
+              setTimeout(() => pf.remove(), 1500);
+            };
+          } else {
+            try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+            catch(e) { window.open(resolved, '_blank', 'noopener'); }
+          }
+        });
+
+        // Optional auto-print
+        if (params.get('print') === '1') {
+          frame.addEventListener('load', () => {
+            if (isPDF) {
+              const pf = document.createElement('iframe');
+              pf.style.position='fixed'; pf.style.right='0'; pf.style.bottom='0';
+              pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
+              pf.src = resolved + '#view=FitH';
+              document.body.appendChild(pf);
+              pf.onload = () => {
+                try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e){}
+                setTimeout(() => pf.remove(), 1500);
+              };
+            } else {
+              try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch(e){}
+            }
+          });
+        }
+      })();
     }
   }
 </script>
