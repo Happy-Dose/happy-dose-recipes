@@ -17,7 +17,7 @@
   .btn.download { background:var(--orange); color:#fff; }
   .viewer { height:calc(100vh - 64px); }
   iframe { width:100%; height:100%; border:0; background:#fff; }
-  .fallback { padding:16px; }
+  .fallback { padding:16px; line-height:1.6 }
   a.link { color:var(--orange); font-weight:700; }
 </style>
 </head>
@@ -33,126 +33,70 @@
   <div class="viewer" id="viewer"></div>
 
 <script>
+  // Use like: viewer.html?file=Mug-Scramble-Printable-Guide.pdf
   const params = new URLSearchParams(location.search);
-  let raw = params.get('file') || '';
-  try { raw = decodeURIComponent(raw); } catch (e) {}
+  let file = params.get('file') || '';
+  try { file = decodeURIComponent(file); } catch (e) {}
+  file = (file || '').replace(/^\/+/, '').replace(/\/{2,}/g,'/');
 
-  const normalize = p => (p || '').replace(/^\/+/, '').replace(/\/{2,}/g, '/');
-  const passed = normalize(raw);
-  const base = passed.split('/').pop();
-
-  // Allow-list contains both dashed and underscored variants (root and /docs)
+  // Only allow files that actually exist in your repo (root)
   const allow = new Set([
-    'mug-scramble-master.html',
-    'mug-scramble-print.html',
-    'Mug-Scramble-Master-Guide.pdf',
-    'Mug_Scramble_Master_Guide.pdf',
-    'docs/Mug-Scramble-Master-Guide.pdf',
-    'docs/Mug_Scramble_Master_Guide.pdf'
+    'Mug-Scramble-Printable-Guide.pdf',
+    'mug-scramble-print.pdf',
+    'mug-scramble-master.html'
   ]);
-
-  // Generate dashed/underscored variants
-  const toUnderscore = s => s.replace(/-/g, '_');
-  const toDash = s => s.replace(/_/g, '-');
 
   const titleEl = document.getElementById('title');
   const v = document.getElementById('viewer');
   const printBtn = document.getElementById('printBtn');
   const downloadBtn = document.getElementById('downloadBtn');
 
-  function setFallback(msg) {
-    const hint = passed || '(no file specified)';
+  function fallback(msg) {
     v.innerHTML = `<div class="fallback">
-      <p>${msg || 'Couldn’t load that file.'}</p>
-      <p>Direct link: <a class="link" href="${passed || '#'}" target="_blank" rel="noopener">${hint}</a></p>
-      <p>Allowed files:<br>${[...allow].map(x=>`• ${x}`).join('<br>')}</p>
+      <p>${msg}</p>
+      <p>Try one of these:</p>
+      <ul>
+        ${[...allow].map(x => `<li><a class="link" href="?file=${encodeURIComponent(x)}">${x}</a></li>`).join('')}
+      </ul>
     </div>`;
     printBtn.disabled = true;
     downloadBtn.href = '#';
   }
 
-  if (!passed) {
-    setFallback('No file specified.');
+  if (!file || !allow.has(file)) {
+    fallback(file ? `“${file}” isn’t allowed or doesn’t exist.` : 'No file specified.');
   } else {
-    // Build candidate paths to try (exact, /docs/, dashed↔underscored)
-    const candidates = [];
-    const addIfAllowed = p => { if (allow.has(p)) candidates.push(p); };
+    titleEl.textContent = `Viewing: ${file.split('/').pop()}`;
+    downloadBtn.href = file;
+    downloadBtn.setAttribute('download', file.split('/').pop());
 
-    addIfAllowed(passed);
-    addIfAllowed('docs/' + base);
+    const isPDF = /\.pdf$/i.test(file);
+    const frame = document.createElement('iframe');
+    frame.id = 'contentFrame';
+    frame.src = file + (isPDF ? '#view=FitH' : '');
+    v.appendChild(frame);
 
-    const dash = toDash(base);
-    const undr = toUnderscore(base);
-    if (dash !== base) { addIfAllowed(dash); addIfAllowed('docs/' + dash); }
-    if (undr !== base) { addIfAllowed(undr); addIfAllowed('docs/' + undr); }
-
-    // Dedupe
-    const seen = new Set();
-    const tryList = candidates.filter(p => !seen.has(p) && (seen.add(p), true));
-
-    (async () => {
-      let resolved = null;
-      for (const p of tryList) {
-        try {
-          const res = await fetch(p, { method: 'HEAD', cache: 'no-store' });
-          if (res.ok) { resolved = p; break; }
-        } catch (e) {}
+    printBtn.addEventListener('click', () => {
+      if (isPDF) {
+        const pf = document.createElement('iframe');
+        pf.style.position='fixed'; pf.style.right='0'; pf.style.bottom='0';
+        pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
+        pf.src = file + '#view=FitH';
+        document.body.appendChild(pf);
+        pf.onload = () => {
+          try { pf.contentWindow.focus(); pf.contentWindow.print(); }
+          catch(e) { window.open(file, '_blank', 'noopener'); }
+          setTimeout(() => pf.remove(), 1200);
+        };
+      } else {
+        try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+        catch(e) { window.open(file, '_blank', 'noopener'); }
       }
+    });
 
-      if (!resolved) {
-        setFallback('File not found at any of the allowed paths.');
-        return;
-      }
-
-      const isPDF = /\.pdf$/i.test(resolved);
-      const nameForTitle = resolved.split('/').pop();
-      titleEl.textContent = `Viewing: ${nameForTitle}`;
-      downloadBtn.href = resolved;
-      downloadBtn.setAttribute('download', nameForTitle);
-
-      const frame = document.createElement('iframe');
-      frame.id = 'contentFrame';
-      frame.src = resolved + (isPDF ? '#view=FitH' : '');
-      v.innerHTML = '';
-      v.appendChild(frame);
-
-      printBtn.disabled = false;
-      printBtn.addEventListener('click', () => {
-        if (isPDF) {
-          const pf = document.createElement('iframe');
-          pf.style.position='fixed'; pf.style.right='0'; pf.style.bottom='0';
-          pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
-          pf.src = resolved + '#view=FitH';
-          document.body.appendChild(pf);
-          pf.onload = () => {
-            try { pf.contentWindow.focus(); pf.contentWindow.print(); }
-            catch(e) { window.open(resolved, '_blank', 'noopener'); }
-            setTimeout(() => pf.remove(), 1500);
-          };
-        } else {
-          try { frame.contentWindow.focus(); frame.contentWindow.print(); }
-          catch(e) { window.open(resolved, '_blank', 'noopener'); }
-        }
-      });
-
-      if (params.get('print') === '1') {
-        frame.addEventListener('load', () => {
-          if (isPDF) {
-            const pf = document.createElement('iframe');
-            pf.style.position='fixed'; pf.style.right='0'; pf.style.bottom='0';
-            pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
-            pf.src = resolved + '#view=FitH';
-            document.body.appendChild(pf);
-            pf.onload = () => {
-              try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e){}
-              setTimeout(() => pf.remove(), 1500);
-            };
-          } else {
-            try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch(e){}
-          }
-        });
-      }
-    })();
+    if (params.get('print') === '1') {
+      frame.addEventListener('load', () => printBtn.click());
+    }
   }
 </script>
 </body>
