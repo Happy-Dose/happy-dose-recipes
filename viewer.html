@@ -16,7 +16,7 @@
   .btn.print { background:#fff; color:var(--green); }
   .btn.download { background:var(--orange); color:#fff; }
   .viewer { height:calc(100vh - 64px); }
-  iframe, embed { width:100%; height:100%; border:0; background:#fff; }
+  iframe { width:100%; height:100%; border:0; background:#fff; }
   .fallback { padding:16px; }
   a.link { color:var(--orange); font-weight:700; }
 </style>
@@ -35,52 +35,97 @@
 <script>
   // Use like: viewer.html?file=Mug-Scramble-Master-Guide.pdf  (or an HTML file)
   const params = new URLSearchParams(location.search);
-  const safe = (s) => (s||"").replace(/[^a-zA-Z0-9._-]/g,'');
-  const file = safe(params.get('file'));
+  let fileParam = params.get('file') || '';
+  try { fileParam = decodeURIComponent(fileParam); } catch(e) {}
 
+  // Exact allow-list. Include either/both depending on where the asset lives.
   const allow = new Set([
     'mug-scramble-master.html',
     'mug-scramble-print.html',
     'Mug-Scramble-Master-Guide.pdf',
-    'Mug-Scramble-Print.pdf'
+    'Mug-Scramble-Print.pdf',
+    'docs/Mug-Scramble-Master-Guide.pdf'   // keep only if you deploy from /docs
   ]);
+
+  // Normalize leading slashes and collapse repeated slashes
+  const file = (fileParam || '').replace(/^\/+/, '').replace(/\/{2,}/g,'/');
 
   const titleEl = document.getElementById('title');
   const v = document.getElementById('viewer');
   const printBtn = document.getElementById('printBtn');
   const downloadBtn = document.getElementById('downloadBtn');
 
+  function baseName(p) { return p.split('/').pop(); }
+
   function fallback() {
+    const hint = file ? `(${file})` : '(no file specified)';
     v.innerHTML = `<div class="fallback">
       <p>Couldn’t load that file. Try the direct link:</p>
-      <p><a class="link" href="${file || '#'}" target="_blank" rel="noopener">${file || '(no file specified)'}</a></p>
+      <p><a class="link" href="${file || '#'}" target="_blank" rel="noopener">${hint}</a></p>
+      <p>Allowed files are:<br>${[...allow].map(x=>`• ${x}`).join('<br>')}</p>
     </div>`;
     printBtn.disabled = !file;
     downloadBtn.href = file || '#';
+    if (file) downloadBtn.setAttribute('download', baseName(file));
   }
 
   if (!file || !allow.has(file)) {
     fallback();
   } else {
-    titleEl.textContent = `Viewing: ${file}`;
+    const nameForTitle = baseName(file);
+    titleEl.textContent = `Viewing: ${nameForTitle}`;
     downloadBtn.href = file;
+    downloadBtn.setAttribute('download', nameForTitle);
 
     const isPDF = /\.pdf$/i.test(file);
-    const el = document.createElement(isPDF ? 'embed' : 'iframe');
-    el.src = file;
-    el.type = isPDF ? 'application/pdf' : 'text/html';
-    el.id = 'contentFrame';
-    v.appendChild(el);
 
+    // Always use an iframe (works for both HTML and PDFs on GitHub Pages).
+    const frame = document.createElement('iframe');
+    frame.id = 'contentFrame';
+    frame.src = file + (isPDF ? '#view=FitH' : '');
+    v.innerHTML = '';
+    v.appendChild(frame);
+
+    // Print button: HTML prints the iframe; PDF prints via a helper window/iframe for reliability.
     printBtn.addEventListener('click', () => {
-      const f = document.getElementById('contentFrame');
-      try { (f.contentWindow || f).print(); } catch(e) { window.open(file, '_blank', 'noopener'); }
+      if (isPDF) {
+        // Hidden iframe method (reliable on most browsers)
+        const pf = document.createElement('iframe');
+        pf.style.position='fixed';
+        pf.style.right='0'; pf.style.bottom='0';
+        pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
+        pf.src = file + '#view=FitH';
+        document.body.appendChild(pf);
+        pf.onload = () => {
+          try { pf.contentWindow.focus(); pf.contentWindow.print(); }
+          catch(e) { window.open(file, '_blank', 'noopener'); }
+          setTimeout(() => pf.remove(), 1500);
+        };
+      } else {
+        try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+        catch(e) { window.open(file, '_blank', 'noopener'); }
+      }
     });
 
     // Optional auto-print: viewer.html?file=...&print=1
     if (params.get('print') === '1') {
-      el.addEventListener('load', () => {
-        setTimeout(() => { try { (el.contentWindow || el).print(); } catch(e){} }, 200);
+      frame.addEventListener('load', () => {
+        if (isPDF) {
+          // Use the same hidden-iframe technique to avoid blocked print() calls
+          const pf = document.createElement('iframe');
+          pf.style.position='fixed';
+          pf.style.right='0'; pf.style.bottom='0';
+          pf.style.width='0'; pf.style.height='0'; pf.style.border='0';
+          pf.src = file + '#view=FitH';
+          document.body.appendChild(pf);
+          pf.onload = () => {
+            try { pf.contentWindow.focus(); pf.contentWindow.print(); }
+            catch(e) {}
+            setTimeout(() => pf.remove(), 1500);
+          };
+        } else {
+          try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch(e){}
+        }
       });
     }
   }
